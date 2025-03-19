@@ -3,6 +3,8 @@ import pyvista as pv
 import itertools
 import numpy as np
 import json
+import pcbnew
+import math
 from tkinter import simpledialog
 
 
@@ -116,6 +118,88 @@ class Picker:
                                    float(item['point'][2])])
                 self.add_point(point_np,self.plotter,item['label_text'])
 
+
+    def get_min_max(self,data):
+
+        xmin=9e9
+        xmax=-9e9
+        ymin=9e9
+        ymax=-9e9
+    
+        for item in data:
+            current_x=data[item][0]
+            current_y=data[item][1]       
+            if current_x<xmin:
+                xmin=current_x
+            if current_y<ymin:
+                ymin=current_y
+            if current_x>xmax:
+                xmax=current_x
+            if current_y>ymax:
+                ymax=current_y
+
+        return([xmin,xmax,ymin,ymax])
+
+
+                
+    def place_points_in_kicad(self,data,output_file,rot_mat,xoffset,yoffset):
+        board = pcbnew.LoadBoard('template_project.kicad_pcb')
+    
+        the_path="./"
+    
+        footprint="pogo_pin_hole"
+    
+        count=1
+        text_xpos=30
+        text_ypos=30
+        for item in data:
+            test_point = pcbnew.FootprintLoad(the_path,footprint)
+            the_pad = test_point.GetTopLeftPad()
+            #print(dir(the_pad))
+            the_pad.SetDrillSizeX(720000)
+            the_pad.SetDrillSizeY(720000)
+            the_pad.SetNumber(count)
+            xpos=rot_mat[0][0]*float(data[item][0])+rot_mat[0][1]*float(data[item][1]);
+            ypos=rot_mat[1][0]*float(data[item][0])+rot_mat[1][1]*float(data[item][1]);
+            xpos=float(xpos)
+            ypos=float(ypos)
+            test_point.SetPosition(pcbnew.wxPointMM(xpos+xoffset,ypos+yoffset))
+            test_point.SetValue(item)
+            test_point.SetReference("REF_%s"%item)
+            board.Add(test_point)
+            pcb_txt = pcbnew.PCB_TEXT(board)
+            pcb_txt.SetText("%d: %s"%(count,item))
+            pcb_txt.SetTextSize(pcbnew.wxSizeMM(5,5))
+            pcb_txt.SetPosition(pcbnew.wxPointMM(text_xpos,text_ypos+count*6))
+            pcb_txt.SetLayer(pcbnew.F_SilkS)
+            board.Add(pcb_txt)      
+            count=count+1
+
+        board.Save(output_file)
+                
+    def output_to_kicad(self,out_file):
+        the_data={}
+        for the_point in self.labelled_points:
+            xpos=the_point['point'][0]
+            ypos=the_point['point'][1]
+            zpos=the_point['point'][2]
+            the_text=the_point['label_text']
+            the_data[the_text]=np.array([xpos,ypos,zpos])
+            
+        [xmin,xmax,ymin,ymax]=self.get_min_max(the_data)
+        xc = (xmax+xmin)/2.0
+        yc = (ymax+ymin)/2.0
+        ang=90.0*3.1415926/180.0
+        flip_y_axis=np.array([[1,0],[0,-1]])
+        do_rot=np.array([[math.cos(ang),-math.sin(ang)],[math.sin(ang),math.cos(ang)]])
+        rot_mat = np.matmul(do_rot,flip_y_axis)
+        #print(rot_mat)
+        #print(do_rot)
+        self.place_points_in_kicad(the_data,out_file,rot_mat,float(150-xc),float(100+yc))
+        
+        
+
+                
     def save_data(self,out_file):
         data_to_save=dict()
         current_xform=self.get_current_object_xform()
@@ -142,6 +226,8 @@ class Picker:
     def the_s_key_save(self):
         print("the_s_key")
         self.save_data(self.output_file)
+        self.output_to_kicad("%s.kicad_pcb"%self.output_file)
+        
 
 
     def the_o_key_save_initial_workspace(self):
